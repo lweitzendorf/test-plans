@@ -110,6 +110,34 @@ def scenario(scenario_name: str, node_count: int, disable_gossip: bool) -> Exper
                 random_publish_every_12s(
                     node_count, num_messages, message_size, [topic_a, topic_b]))
 
+        case "longevity":
+            gs_params = GossipSubParams()
+            if disable_gossip:
+                gs_params.Dlazy = 0
+                gs_params.GossipFactor = 0
+            instructions.extend(spread_heartbeat_delay(
+                node_count, gs_params))
+
+            number_of_conns_per_node = 20
+            if number_of_conns_per_node >= node_count:
+                number_of_conns_per_node = node_count - 1
+            instructions.extend(
+                random_network_mesh(node_count, number_of_conns_per_node)
+            )
+
+            topic = "topic-a"
+
+            instructions.append(
+                script_instruction.SubscribeToTopic(topicID=topic))
+            instructions.extend(
+                random_publish_every_12s(
+                    node_count=node_count,
+                    num_messages=1200,
+                    message_size=1024,
+                    topic_strs=[topic]
+                )
+            )
+
         case _:
             raise ValueError(f"Unknown scenario name: {scenario_name}")
 
@@ -189,6 +217,43 @@ def random_publish_every_12s(
             )
         )
         elapsed_seconds += 12  # Add 12 seconds for each subsequent message
+        instructions.append(
+            script_instruction.WaitUntil(elapsedSeconds=elapsed_seconds)
+        )
+
+    elapsed_seconds += 30  # wait a bit more to allow all messages to flush
+    instructions.append(script_instruction.WaitUntil(
+        elapsedSeconds=elapsed_seconds))
+
+    return instructions
+
+
+def all_publish_every_12s(
+        node_count: int, num_messages: int, message_size: int, topic_strs: List[str]
+) -> List[ScriptInstruction]:
+    instructions = []
+
+    # Start at 120 seconds (2 minutes) to allow for setup time
+    elapsed_seconds = 120
+    instructions.append(script_instruction.WaitUntil(elapsedSeconds=elapsed_seconds))
+
+    message_id = 0
+
+    for i in range(num_messages):
+        for topic_str in topic_strs:
+            for node in range(node_count):
+                instructions.append(
+                    script_instruction.IfNodeIDEquals(
+                        nodeID=node,
+                        instruction=script_instruction.Publish(
+                            messageID=message_id,
+                            topicID=topic_str,
+                            messageSizeBytes=message_size,
+                        )
+                    ),
+                )
+                message_id += 1
+        elapsed_seconds += 12  # Add 12 second for each subsequent message
         instructions.append(
             script_instruction.WaitUntil(elapsedSeconds=elapsed_seconds)
         )
