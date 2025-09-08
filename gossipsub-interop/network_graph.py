@@ -43,7 +43,8 @@ south_america = Location("south_america", 36)
 
 supernode = NodeType("supernode", 1024, 1024, 20)
 fullnode = NodeType("fullnode", 50, 50, 80)
-node_types = [supernode, fullnode]
+# node_types = [supernode, fullnode]
+node_types = [fullnode]
 
 locations = [
     australia,
@@ -144,6 +145,7 @@ def generate_graph(
     for t1 in node_types:
         for t2 in node_types:
             for edge in edges:
+                edge.latency = 100
                 G.add_edge(
                     f"{edge.src.name}-{t1.name}",
                     f"{edge.dst.name}-{t2.name}",
@@ -183,6 +185,20 @@ def generate_graph(
                 }
             ],
         }
+
+    """
+    num_nodes = len(binary_paths)
+    faulty_indices = random.sample(list(range(num_nodes)), k=num_nodes//2)
+    for i in faulty_indices:
+        stop_time = random.randint(0, 3600)
+        config["hosts"][f"node{i}"]["processes"][0] |= {
+            "shutdown_time" : f"{stop_time} sec",
+            "shutdown_signal" : "SIGTERM",
+            "expected_final_state": {
+                "signaled": "SIGTERM"
+            }
+        }
+    """
 
     with open(shadow_yaml_file_name, "w") as file:
         yaml.dump(config, file)
