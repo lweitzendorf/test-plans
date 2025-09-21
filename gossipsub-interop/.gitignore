@@ -19,3 +19,4 @@ backup
 timelines
 experiment-results/**
 __pycache__
+*.data/
