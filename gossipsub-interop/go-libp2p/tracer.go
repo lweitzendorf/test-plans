@@ -16,7 +16,7 @@ type gossipTracer struct {
 }
 
 func formatMessageID[S ~string | ~[]byte](msgID S) string {
-	// Intepret the message ID as a big endiant u64int
+	// Interpret the message ID as a big endian u64int
 	return fmt.Sprintf("%d", binary.BigEndian.Uint64([]byte(msgID)))
 }
 
@@ -35,37 +35,66 @@ func (g *gossipTracer) logMeta(action string, logger *slog.Logger, meta *pubsub_
 	if meta == nil {
 		return
 	}
-	for _, msg := range meta.Messages {
-		logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Message", slog.String("topic", msg.GetTopic()), slog.String("id", formatMessageID(msg.GetMessageID())))
-	}
+
+	/*
+		size := len(msg.GetTopic()) + len(msg.GetMessageID()) + 1024
+		for _, msg := range meta.Messages {
+			logger.LogAttrs(
+				context.Background(),
+				slog.LevelInfo,
+				action+" Message",
+				slog.String("topic", msg.GetTopic()),
+				slog.String("id", formatMessageID(msg.GetMessageID())),
+				slog.Int("size", size),
+			)
+		}
+	*/
 
 	for _, subs := range meta.Subscription {
-		logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Subscription", slog.String("topic", subs.GetTopic()))
+		size := 1 + len(subs.GetTopic())
+		logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Subscription", slog.String("topic", subs.GetTopic()), slog.Int("size", size))
 	}
 
 	if meta.Control != nil {
 		for _, graft := range meta.Control.GetGraft() {
-			logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Graft", slog.String("topic", graft.GetTopic()))
+			size := len(graft.GetTopic())
+			logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Graft", slog.String("topic", graft.GetTopic()), slog.Int("size", size))
 		}
 		for _, prune := range meta.Control.GetPrune() {
-			logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Prune", slog.String("topic", prune.GetTopic()))
+			size := len(prune.GetTopic())
+			for _, peerID := range prune.GetPeers() {
+				size += len(peerID)
+			}
+			logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Prune", slog.String("topic", prune.GetTopic()), slog.Int("size", size))
 		}
 		for _, idontwant := range meta.Control.GetIdontwant() {
+			size := 0
+			for _, msgID := range idontwant.GetMessageIDs() {
+				size += len(msgID)
+			}
 			msgIDs := messageIDsToStr(idontwant.GetMessageIDs())
 			if msgIDs != "" {
-				logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Idontwant", slog.String("ids", msgIDs))
+				logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Idontwant", slog.String("ids", msgIDs), slog.Int("size", size))
 			}
 		}
 		for _, iwant := range meta.Control.GetIwant() {
+			size := 0
+			for _, msgID := range iwant.GetMessageIDs() {
+				size += len(msgID)
+			}
 			msgIDs := messageIDsToStr(iwant.GetMessageIDs())
 			if msgIDs != "" {
-				logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Iwant", slog.String("ids", msgIDs))
+				logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Iwant", slog.String("ids", msgIDs), slog.Int("size", size))
 			}
 		}
 		for _, ihave := range meta.Control.GetIhave() {
+			size := len(ihave.GetTopic())
+			for _, msgID := range ihave.GetMessageIDs() {
+				size += len(msgID)
+			}
 			msgIDs := messageIDsToStr(ihave.GetMessageIDs())
 			if msgIDs != "" {
-				logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Ihave", slog.String("ids", msgIDs))
+				logger.LogAttrs(context.Background(), slog.LevelInfo, action+" Ihave", slog.String("ids", msgIDs), slog.Int("size", size))
 			}
 		}
 	}
@@ -84,5 +113,64 @@ func (g *gossipTracer) Trace(evt *pubsub_pb.TraceEvent) {
 		to := peer.ID(send.GetSendTo())
 		logger := g.logger.With(slog.String("to", to.String()))
 		g.logMeta("Sent", logger, send.GetMeta())
+	/*case pubsub_pb.TraceEvent_GRAFT:
+		graft := evt.GetGraft()
+		g.logger.LogAttrs(
+			context.Background(),
+			slog.LevelInfo,
+			"Graft",
+			slog.String("topic", graft.GetTopic()),
+			slog.String("peerId", peer.ID(graft.GetPeerID()).String()),
+		)
+	case pubsub_pb.TraceEvent_PRUNE:
+		prune := evt.GetPrune()
+		g.logger.LogAttrs(
+			context.Background(),
+			slog.LevelInfo,
+			"Prune",
+			slog.String("topic", prune.GetTopic()),
+			slog.String("peerId", peer.ID(prune.GetPeerID()).String()),
+		)*/
+	case pubsub_pb.TraceEvent_PUBLISH_MESSAGE:
+		publish := evt.GetPublishMessage()
+		size := len(publish.GetTopic()) + len(publish.GetMessageID()) + 1024
+		g.logger.LogAttrs(
+			context.Background(),
+			slog.LevelInfo,
+			"Publish",
+			slog.String("topic", publish.GetTopic()),
+			slog.String("id", formatMessageID(publish.GetMessageID())),
+			slog.Int("size", size),
+			slog.Int64("timestamp", evt.GetTimestamp()),
+		)
+	case pubsub_pb.TraceEvent_DELIVER_MESSAGE:
+		deliver := evt.GetDeliverMessage()
+		size := len(deliver.GetTopic()) + len(deliver.GetMessageID()) + 1024 + deliver.Size()
+		g.logger.LogAttrs(
+			context.Background(),
+			slog.LevelInfo,
+			"Deliver",
+			slog.String("topic", deliver.GetTopic()),
+			slog.String("id", formatMessageID(deliver.GetMessageID())),
+			slog.String("from", peer.ID(deliver.GetReceivedFrom()).String()),
+			slog.Int("size", size),
+			slog.Int64("timestamp", evt.GetTimestamp()),
+		)
+	case pubsub_pb.TraceEvent_ADD_PEER:
+		addPeer := evt.GetAddPeer()
+		g.logger.LogAttrs(
+			context.Background(),
+			slog.LevelInfo,
+			"Added Peer",
+			slog.String("id", peer.ID(addPeer.PeerID).String()),
+		)
+	case pubsub_pb.TraceEvent_REMOVE_PEER:
+		removePeer := evt.GetRemovePeer()
+		g.logger.LogAttrs(
+			context.Background(),
+			slog.LevelInfo,
+			"Removed Peer",
+			slog.String("id", peer.ID(removePeer.PeerID).String()),
+		)
 	}
 }

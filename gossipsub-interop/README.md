@@ -23,7 +23,7 @@ parameters can be modified without modifying implementations. See `experiment.py
 
 After running a test, there are three key results we can extract from the simulation:
 
-1. The _reliability_ of the message dissemenation. This is the percentage of
+1. The _reliability_ of the message dissemination. This is the percentage of
    nodes that a message was delivered to.
 2. The dissementation _latency_ to disseminate the message.
 3. The _bandwidth efficiency_ in terms of the number of _duplicate messages_ received.
