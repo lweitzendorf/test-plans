@@ -36,19 +36,17 @@ func (g *gossipTracer) logMeta(action string, logger *slog.Logger, meta *pubsub_
 		return
 	}
 
-	/*
+	for _, msg := range meta.Messages {
 		size := len(msg.GetTopic()) + len(msg.GetMessageID()) + 1024
-		for _, msg := range meta.Messages {
-			logger.LogAttrs(
-				context.Background(),
-				slog.LevelInfo,
-				action+" Message",
-				slog.String("topic", msg.GetTopic()),
-				slog.String("id", formatMessageID(msg.GetMessageID())),
-				slog.Int("size", size),
-			)
-		}
-	*/
+		logger.LogAttrs(
+			context.Background(),
+			slog.LevelInfo,
+			action+" Message",
+			slog.String("topic", msg.GetTopic()),
+			slog.String("id", formatMessageID(msg.GetMessageID())),
+			slog.Int("size", size),
+		)
+	}
 
 	for _, subs := range meta.Subscription {
 		size := 1 + len(subs.GetTopic())
@@ -141,7 +139,6 @@ func (g *gossipTracer) Trace(evt *pubsub_pb.TraceEvent) {
 			slog.String("topic", publish.GetTopic()),
 			slog.String("id", formatMessageID(publish.GetMessageID())),
 			slog.Int("size", size),
-			slog.Int64("timestamp", evt.GetTimestamp()),
 		)
 	case pubsub_pb.TraceEvent_DELIVER_MESSAGE:
 		deliver := evt.GetDeliverMessage()
@@ -154,7 +151,6 @@ func (g *gossipTracer) Trace(evt *pubsub_pb.TraceEvent) {
 			slog.String("id", formatMessageID(deliver.GetMessageID())),
 			slog.String("from", peer.ID(deliver.GetReceivedFrom()).String()),
 			slog.Int("size", size),
-			slog.Int64("timestamp", evt.GetTimestamp()),
 		)
 	case pubsub_pb.TraceEvent_ADD_PEER:
 		addPeer := evt.GetAddPeer()
