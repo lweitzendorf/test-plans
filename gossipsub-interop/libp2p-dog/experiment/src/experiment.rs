@@ -119,7 +119,7 @@ impl ScriptedNode {
                     .publish(msg.clone())
                 {
                     Ok(_) => {
-                        info!(self.stderr_logger,"Sent Message";
+                        info!(self.stderr_logger, "Sent Message";
                             "id" => message_id,
                             "size" => message_size_bytes
                         );
@@ -127,7 +127,9 @@ impl ScriptedNode {
                     Err(e) => {
                         error!(
                             self.stderr_logger,
-                            "Failed to publish message {}: {}", message_id, e
+                            "Failed to publish message";
+                            "id" => message_id,
+                            "error" => ?e
                         );
                         return Err(Box::new(std::io::Error::other(e.to_string())));
                     }

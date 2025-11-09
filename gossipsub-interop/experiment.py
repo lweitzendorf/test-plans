@@ -1,3 +1,4 @@
+import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -112,31 +113,54 @@ def scenario(scenario_name: str, node_count: int, disable_gossip: bool) -> Exper
 
         case "longevity":
             gs_params = GossipSubParams()
+
             if disable_gossip:
                 gs_params.Dlazy = 0
                 gs_params.GossipFactor = 0
-            instructions.extend(spread_heartbeat_delay(
-                node_count, gs_params))
+            #instructions.extend(spread_heartbeat_delay(node_count, gs_params))
 
             number_of_conns_per_node = 20
             if number_of_conns_per_node >= node_count:
                 number_of_conns_per_node = node_count - 1
             instructions.extend(
                 random_network_mesh(node_count, number_of_conns_per_node)
+                # line_mesh(node_count)
+                # isolated_cluster_mesh(node_count, number_of_conns_per_node, int(math.sqrt(node_count)))
+                # cluster_bridge_mesh(node_count, number_of_conns_per_node, int(math.sqrt(node_count)))
+                # star_mesh(node_count, number_of_conns_per_node)
             )
 
             topic = "topic-a"
 
-            instructions.append(
-                script_instruction.SubscribeToTopic(topicID=topic))
+            #instructions.append(
+            #    script_instruction.SubscribeToTopic(topicID=topic))
+            
+            instructions.extend(random_publish_every_12s(
+                node_count=node_count,
+                num_messages=100,
+                message_size=1024,
+                topic_strs=[topic]
+            ))
+            
+            """
             instructions.extend(
                 random_publish_every_12s(
                     node_count=node_count,
-                    num_messages=1200,
+                    num_messages=5,
                     message_size=1024,
                     topic_strs=[topic]
                 )
             )
+            instructions.extend(random_network_mesh(node_count, node_count // 2))
+            instructions.extend(
+                random_publish_every_12s(
+                    node_count=node_count,
+                    num_messages=95,
+                    message_size=1024,
+                    topic_strs=[topic]
+                )
+            )
+            """
 
         case _:
             raise ValueError(f"Unknown scenario name: {scenario_name}")
@@ -146,23 +170,88 @@ def scenario(scenario_name: str, node_count: int, disable_gossip: bool) -> Exper
 
 def composition(preset_name: str) -> List[Binary]:
     match preset_name:
-        case "all-go":
+        case "gossipsub":
             return [Binary("go-libp2p/gossipsub-bin", percent_of_nodes=100)]
-        case "all-rust":
-            # Always use debug. We don't measure compute performance here.
-            return [
-                Binary(
-                    "rust-libp2p/target/debug/rust-libp2p-gossip", percent_of_nodes=100
-                )
-            ]
-        case "rust-and-go":
-            return [
-                Binary(
-                    "rust-libp2p/target/debug/rust-libp2p-gossip", percent_of_nodes=50
-                ),
-                Binary("go-libp2p/gossipsub-bin", percent_of_nodes=50),
-            ]
+        case "dog":
+            return [Binary("rust-dog/target/debug/rust-dog", percent_of_nodes=100)]
     raise ValueError(f"Unknown preset name: {preset_name}")
+
+
+def isolated_cluster_mesh(num_nodes: int, number_of_connections: int, num_clusters: int) -> List[ScriptInstruction]:
+    instructions = []
+
+    cluster_size = num_nodes // num_clusters
+    if number_of_connections >= cluster_size:
+        number_of_connections = cluster_size - 1
+
+    for cluster_idx in range(num_clusters):
+        idx_offset = cluster_idx * cluster_size
+        for instruction in random_network_mesh(cluster_size, number_of_connections):
+            instruction.nodeID += idx_offset
+            for i in range(len(instruction.instruction.connectTo)):
+                instruction.instruction.connectTo[i] += idx_offset
+            instructions.append(instruction)
+
+    return instructions
+
+
+def cluster_bridge_mesh(num_nodes: int, number_of_connections: int, num_clusters: int) -> List[ScriptInstruction]:
+    instructions = []
+
+    cluster_size = num_nodes // num_clusters
+    if number_of_connections >= cluster_size:
+        number_of_connections = cluster_size - 1
+
+    for cluster_idx in range(num_clusters):
+        idx_offset = cluster_idx * cluster_size
+        for instruction in random_network_mesh(cluster_size, number_of_connections - 1):
+            instruction.nodeID += idx_offset
+            for i in range(len(instruction.instruction.connectTo)):
+                instruction.instruction.connectTo[i] += idx_offset
+
+            connections = set(instruction.instruction.connectTo)
+            while len(connections) == len(instruction.instruction.connectTo):
+                new_node = random.randint(0, num_nodes - 1)
+                if new_node not in connections:
+                    instruction.instruction.connectTo.append(new_node)
+
+            instructions.append(instruction)
+
+    return instructions
+
+
+def star_mesh(num_nodes: int, number_of_connections: int) -> List[ScriptInstruction]:
+    num_stars = (num_nodes // number_of_connections) + 1
+
+    instructions = random_network_mesh(num_stars, min(num_stars - 1, number_of_connections // 2))
+    for periphery_id in range(num_stars, num_nodes):
+        star_id = periphery_id % num_stars
+        instructions.append(
+            script_instruction.IfNodeIDEquals(
+                nodeID=periphery_id,
+                instruction=script_instruction.Connect(
+                    connectTo=[star_id],
+                ),
+            )
+        )
+
+    return instructions
+
+
+def line_mesh(num_nodes: int) -> List[ScriptInstruction]:
+    instructions = []
+
+    for node_id in range(num_nodes):
+        instructions.append(
+            script_instruction.IfNodeIDEquals(
+                nodeID=node_id,
+                instruction=script_instruction.Connect(
+                    connectTo=[(node_id + 1) % num_nodes],
+                ),
+            )
+        )
+
+    return instructions
 
 
 def random_network_mesh(
@@ -173,12 +262,13 @@ def random_network_mesh(
     for node_id in range(node_count):
         while len(connections[node_id]) < number_of_connections:
             target = random.randint(0, node_count - 1)
-            if target == node_id:
+            if (target == node_id) or (target in connections[node_id]):
                 continue
+
             connections[node_id].add(target)
+            connect_to[node_id].append(target)
             connections[target].add(node_id)
 
-            connect_to[node_id].append(target)
 
     instructions = []
     for node_id, node_connections in connect_to.items():

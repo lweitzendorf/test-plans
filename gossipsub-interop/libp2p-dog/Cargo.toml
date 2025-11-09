@@ -1,0 +1,46 @@
+[workspace]
+members = [
+    "dog",
+    "experiment"
+]
+resolver = "2"
+
+[workspace.package]
+rust-version = "1.90"
+
+[workspace.dependencies]
+libp2p-dog = { version = "0.1.0", path = "dog" }
+
+# External dependencies
+async-channel = "2.3.1"
+asynchronous-codec = "0.7.0"
+bytes = "1.10"
+clap = "4.5.32"
+either = "1.15.0"
+fnv = "1.0.7"
+futures = "0.3.31"
+futures-timer = "3.0.3"
+hex_fmt = "0.3.0"
+libp2p = "0.55.0"
+libp2p-core = "0.43.0"
+prometheus-client = "0.22.3"
+quick-protobuf = "0.8.1"
+quick-protobuf-codec = "0.3.1"
+rand = "0.8"
+serde = "1"
+serde_json = "1.0.140"
+thiserror = "2"
+tokio = "1.44.1"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+web-time = "1.1.0"
+
+[workspace.lints]
+rust.unreachable_pub = "warn"
+clippy.used_underscore_binding = "warn"
+clippy.pedantic = { level = "allow", priority = -1 }
+clippy.type_complexity = "allow"
+clippy.unnecessary_wraps = "warn"
+clippy.manual_let_else = "warn"
+clippy.dbg_macro = "warn"
+
