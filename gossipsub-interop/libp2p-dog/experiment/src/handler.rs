@@ -17,11 +17,21 @@ async fn handle_dog_event(
     state: &mut State,
 ) {
     match event {
-        libp2p_dog::Event::Transaction { transaction, .. } => {
+        libp2p_dog::Event::TransactionReceived { transaction, transaction_id, propagation_source } => {
             info!(_stdout_logger, "Received Message";
                 "topic" => "-",
-                "id" => transaction.seqno,
-                "from" => transaction.from.to_string()
+                "id" => transaction_id.to_string(),
+                "from" => propagation_source.to_string(),
+                "size" => transaction.data.len()
+            );
+            state.transactions_received.push(transaction);
+        }
+        libp2p_dog::Event::TransactionSent { transaction, transaction_id, propagation_target, .. } => {
+            info!(_stdout_logger, "Sent Message";
+                "topic" => "-",
+                "id" => transaction_id.to_string(),
+                "to" => propagation_target.to_string(),
+                "size" => transaction.data.len(),
             );
             state.transactions_received.push(transaction);
         }

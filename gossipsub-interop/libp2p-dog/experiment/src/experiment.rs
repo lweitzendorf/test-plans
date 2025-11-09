@@ -118,12 +118,7 @@ impl ScriptedNode {
                     .dog
                     .publish(msg.clone())
                 {
-                    Ok(_) => {
-                        info!(self.stderr_logger, "Sent Message";
-                            "id" => message_id,
-                            "size" => message_size_bytes
-                        );
-                    }
+                    Ok(_) => {}
                     Err(e) => {
                         error!(
                             self.stderr_logger,

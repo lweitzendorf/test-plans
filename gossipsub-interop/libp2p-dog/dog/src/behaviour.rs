@@ -48,9 +48,17 @@ pub enum TransactionAuthenticity {
 #[derive(Debug)]
 pub enum Event {
     /// A transaction has been received.
-    Transaction {
+    TransactionReceived {
         /// The peer that forwarded us this transaction.
         propagation_source: PeerId,
+        /// The [`TransactionId`] of the transaction. This is the main identifier of the transaction.
+        transaction_id: TransactionId,
+        /// The transaction itself.
+        transaction: Transaction,
+    },
+    TransactionSent {
+        /// The peer that we're forwarding this transaction to.
+        propagation_target: PeerId,
         /// The [`TransactionId`] of the transaction. This is the main identifier of the transaction.
         transaction_id: TransactionId,
         /// The transaction itself.
@@ -246,15 +254,6 @@ where
             m.set_txs_cache_size(self.cache.len());
         }
 
-        if self.config.deliver_own_transactions() {
-            self.events
-                .push_back(ToSwarm::GenerateEvent(Event::Transaction {
-                    propagation_source: self.publish_config.get_own_id(),
-                    transaction_id: tx_id.clone(),
-                    transaction,
-                }));
-        }
-
         let recipient_peers = self.router.filter_valid_routes(
             self.publish_config.get_own_id(),
             self.connected_peers.keys().cloned().collect::<Vec<_>>(),
@@ -271,6 +270,12 @@ where
                 },
             ) {
                 publish_failed = false;
+                self.events
+                    .push_back(ToSwarm::GenerateEvent(Event::TransactionSent {
+                        propagation_target: peer_id.clone(),
+                        transaction_id: tx_id.clone(),
+                        transaction: transaction.clone(),
+                    }));
             }
         }
 
@@ -390,15 +395,28 @@ where
             return false;
         }
 
+        let transaction = Transaction {
+            from: raw_transaction.from,
+            seqno: raw_transaction.seqno,
+            data: raw_transaction.data.clone(),
+        };
+
         for peer_id in &recipient_peers {
             tracing::trace!(peer=%peer_id, "Forwarding transaction to peer");
-            self.send_transaction(
+            if self.send_transaction(
                 *peer_id,
                 RpcOut::Forward {
                     tx: raw_transaction.clone(),
                     timeout: Delay::new(self.config.forward_queue_duration()),
                 },
-            );
+            ) {
+                self.events
+                    .push_back(ToSwarm::GenerateEvent(Event::TransactionSent {
+                        propagation_target: peer_id.clone(),
+                        transaction_id: transaction_id.clone(),
+                        transaction: transaction.clone(),
+                    }));
+            };
         }
 
         tracing::debug!("Completed forwarding transaction");
@@ -510,8 +528,9 @@ where
         }
 
         tracing::debug!("Deliver received transaction to user");
+
         self.events
-            .push_back(ToSwarm::GenerateEvent(Event::Transaction {
+            .push_back(ToSwarm::GenerateEvent(Event::TransactionReceived {
                 propagation_source: *propagation_source,
                 transaction_id: tx_id.clone(),
                 transaction,
@@ -737,7 +756,7 @@ where
     fn poll(
         &mut self,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<ToSwarm<Self::ToSwarm, libp2p::swarm::THandlerInEvent<Self>>> {
+    ) -> Poll<ToSwarm<Self::ToSwarm, libp2p::swarm::THandlerInEvent<Self>>> {
         if let Some(event) = self.events.pop_front() {
             return Poll::Ready(event);
         }
