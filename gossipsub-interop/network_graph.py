@@ -43,8 +43,7 @@ south_america = Location("south_america", 36)
 
 supernode = NodeType("supernode", 1024, 1024, 20)
 fullnode = NodeType("fullnode", 50, 50, 80)
-# node_types = [supernode, fullnode]
-node_types = [fullnode]
+node_types = [fullnode]  # [supernode, fullnode]
 
 locations = [
     australia,

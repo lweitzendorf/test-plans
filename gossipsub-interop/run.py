@@ -44,8 +44,7 @@ def main():
         import datetime
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        args.output_dir = f"{args.scenario}-{args.node_count}-{
-            args.composition}-{args.seed}-{timestamp}-{git_describe}.data"
+        args.output_dir = f"{args.scenario}-{args.node_count}-{args.composition}-{args.seed}-{timestamp}-{git_describe}.data"
 
     random.seed(args.seed)
 
@@ -59,7 +58,7 @@ def main():
             instruction.model_dump(exclude_none=True)
             for instruction in experiment_params.script
         ]
-        json.dump(d, f)
+        json.dump(d, f, indent=4)
 
     # Define the binaries we are running
     binary_paths = random.choices(
@@ -82,7 +81,7 @@ def main():
     subprocess.run(["make", "binaries"])
 
     subprocess.run(
-        ["shadow", "--progress", "true", "-d", args.output_dir, "shadow.yaml"],
+        ["shadow", "--parallelism", "24", "--progress", "true", "-d", args.output_dir, "shadow.yaml"],
     )
 
     # Move files to output_dir
@@ -91,7 +90,7 @@ def main():
     os.rename("params.json", os.path.join(args.output_dir, "params.json"))
 
     # Analyse message deliveries. Skip the first 4 as warmup messages
-    analyse_message_deliveries(args.output_dir, f"{args.output_dir}/plots", 4)
+    # analyse_message_deliveries(args.output_dir, f"{args.output_dir}/plots", 4)
 
 
 if __name__ == "__main__":

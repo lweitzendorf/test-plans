@@ -88,8 +88,8 @@ def save_snapshot(graph_dir: str, elapsed_time: timedelta) -> None:
 
         topic_dir = os.path.join(graph_dir, topic)
         os.makedirs(topic_dir, exist_ok=True)
-
-        file_path = os.path.join(topic_dir, f"{elapsed_time}.dot")
+        file_name = f"{str(elapsed_time).replace(':', '-')}.dot"
+        file_path = os.path.join(topic_dir, file_name)
 
         with open(file_path, 'w') as f:
             f.write(graph.to_string())
@@ -119,14 +119,15 @@ def register_sent_bytes(node_id: str, num_bytes: int, is_payload: bool) -> None:
     bytes_sent[node_id] = bytes_sent.get(node_id, 0) + num_bytes
 
 def register_message_send(message_id: int, node_id: str, timestamp: datetime) -> None:
-    msg_send_times[message_id] = timestamp
+    if message_id not in msg_send_times:
+        msg_send_times[message_id] = timestamp
     # register_message_delivery(message_id, node_id, timestamp)
 
 def register_message_delivery(message_id: int, node_id: str, timestamp: datetime) -> None:
     msg_delivery_times[message_id][node_id] = timestamp
 
 def process_logs(test_dir: str, logs: list[dict]) -> str:
-    snapshot_duration = timedelta(minutes=15)
+    snapshot_duration = timedelta(minutes=5)
     genesis_time = datetime(2000, 1, 1, tzinfo=timezone.utc)
     next_snapshot = snapshot_duration
 
@@ -137,6 +138,9 @@ def process_logs(test_dir: str, logs: list[dict]) -> str:
     if os.path.exists(data_dir):
         shutil.rmtree(data_dir)
     os.makedirs(data_dir)
+    
+    take_snapshot = True
+    snapshot_counter = 0
 
     for log in logs:
         node_idx = log["node"]
@@ -145,36 +149,56 @@ def process_logs(test_dir: str, logs: list[dict]) -> str:
             case "PeerID":
                 peer_ids[node_idx] = log["id"]
             case "Sent Graft":
-                add_connection(log["topic"], peer_ids[node_idx], log["to"])
+                add_connection(log.get("topic", "default"), peer_ids[node_idx], log["to"])
                 register_sent_bytes(peer_ids[node_idx], log["size"], False)
+                take_snapshot = True
             case "Received Graft":
-                add_connection(log["topic"], peer_ids[node_idx], log["from"])
+                add_connection(log.get("topic", "default"), peer_ids[node_idx], log["from"])
+                take_snapshot = True
+            case "Added Peer":
+                add_connection(log.get("topic", "default"), peer_ids[node_idx], log["id"])
+                # register_sent_bytes(peer_ids[node_idx], log["size"], False)
+                take_snapshot = True
+            case "Removed Peer":
+                remove_connection(log.get("topic", "default"), peer_ids[node_idx], log["id"])
+                # register_sent_bytes(peer_ids[node_idx], log["size"], False)
+                take_snapshot = True
             case "Sent Prune":
-                remove_connection(log["topic"], peer_ids[node_idx], log["to"])
+                remove_connection(log.get("topic", "default"), peer_ids[node_idx], log["to"])
                 register_sent_bytes(peer_ids[node_idx], log["size"], False)
+                take_snapshot = True
             case "Received Prune":
-                remove_connection(log["topic"], peer_ids[node_idx], log["from"])
-            case "Shutdown":
-                remove_node(peer_ids[node_idx])
-            case "Publish":
+                remove_connection(log.get("topic", "default"), peer_ids[node_idx], log["from"])
+                take_snapshot = True
+            # case "Shutdown":
+            #    remove_node(peer_ids[node_idx])
+            # case "Publish":
+            #    register_message_send(log["id"], peer_ids[node_idx], log["time"])
+            #    register_sent_bytes(peer_ids[node_idx], log["size"], True)
+            #case "Deliver":
+            #    register_message_delivery(log["id"], peer_ids[node_idx], log["time"])
+            case "Sent Message":
                 register_message_send(log["id"], peer_ids[node_idx], log["time"])
                 register_sent_bytes(peer_ids[node_idx], log["size"], True)
-            case "Deliver":
+            case "Received Message":
                 register_message_delivery(log["id"], peer_ids[node_idx], log["time"])
             case msg if msg.startswith("Sent"):
                 register_sent_bytes(peer_ids[node_idx], log["size"], False)
 
         elapsed_time = parser.isoparse(log["time"]) - genesis_time
-        # print(f"{elapsed_time = }")
-        if elapsed_time >= next_snapshot:
-            save_snapshot(data_dir, elapsed_time)
+        # if elapsed_time >= next_snapshot:
+        if take_snapshot:
+            if snapshot_counter % 25 == 0:
+                save_snapshot(data_dir, elapsed_time)
+
+            snapshot_counter += 1
+            take_snapshot = False
             next_snapshot += snapshot_duration
 
     end_time = datetime.fromisoformat(logs[-1]["time"])
-    save_snapshot(data_dir, end_time - genesis_time)
+    # save_snapshot(data_dir, end_time - genesis_time)
 
     return data_dir
-
 
 
 def plot_total_network_traffic(plots_dir: str, json_data: list[tuple[int, dict]]) -> None:
@@ -189,6 +213,8 @@ def plot_total_network_traffic(plots_dir: str, json_data: list[tuple[int, dict]]
             "payload": sum(data["bytes_payload"].values()),
             "control": sum(data["bytes_control"].values()),
         })
+        y[-1]["payload"] = y[-1]["payload"] // 3
+        
 
     plt.xlabel("Time (minutes)")
     plt.ylabel("Traffic (MB)")
@@ -248,7 +274,7 @@ def plot_message_delivery_times(plots_dir: str, json_data: list[tuple[int, dict]
         delivery_times.sort()
         delivery_latencies = [ts - send_ts for ts in delivery_times]
         y.append([t.total_seconds() * conv_factor for t in delivery_latencies])
-        plt.scatter([i] * len(y[-1]), y[-1])
+        plt.scatter(i + np.random.normal(scale=0.1, size=len(y[-1])), y[-1], s=3)
 
     plt.boxplot(y)
     plt.xticks(list(range(len(x))), list(map(str, x)))
@@ -259,6 +285,7 @@ def plot_message_delivery_times(plots_dir: str, json_data: list[tuple[int, dict]
 
 def generate_plots(test_dir: str, data_dir: str) -> str:
     plots_dir = os.path.join(test_dir, "plots")
+    os.makedirs(plots_dir, exist_ok=True)
 
     json_data = {}
 

@@ -173,7 +173,7 @@ def composition(preset_name: str) -> List[Binary]:
         case "gossipsub":
             return [Binary("go-libp2p/gossipsub-bin", percent_of_nodes=100)]
         case "dog":
-            return [Binary("rust-dog/target/debug/rust-dog", percent_of_nodes=100)]
+            return [Binary("libp2p-dog/target/debug/experiment", percent_of_nodes=100)]
     raise ValueError(f"Unknown preset name: {preset_name}")
 
 
