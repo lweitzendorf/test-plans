@@ -1,3 +1,4 @@
+use byteorder::{BigEndian, ByteOrder};
 use libp2p::{
     core::ConnectedPoint,
     swarm::{self, SwarmEvent},
@@ -17,19 +18,19 @@ async fn handle_dog_event(
     state: &mut State,
 ) {
     match event {
-        libp2p_dog::Event::TransactionReceived { transaction, transaction_id, propagation_source } => {
+        libp2p_dog::Event::TransactionReceived { transaction, propagation_source, .. } => {
             info!(_stdout_logger, "Received Message";
                 "topic" => "-",
-                "id" => transaction_id.to_string(),
+                "id" => BigEndian::read_u64(&transaction.data),
                 "from" => propagation_source.to_string(),
                 "size" => transaction.data.len()
             );
             state.transactions_received.push(transaction);
         }
-        libp2p_dog::Event::TransactionSent { transaction, transaction_id, propagation_target, .. } => {
+        libp2p_dog::Event::TransactionSent { transaction, propagation_target, .. } => {
             info!(_stdout_logger, "Sent Message";
                 "topic" => "-",
-                "id" => transaction_id.to_string(),
+                "id" => BigEndian::read_u64(&transaction.data),
                 "to" => propagation_target.to_string(),
                 "size" => transaction.data.len(),
             );

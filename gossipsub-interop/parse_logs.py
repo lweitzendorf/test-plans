@@ -184,19 +184,20 @@ def process_logs(test_dir: str, logs: list[dict]) -> str:
                 register_message_delivery(log["id"], peer_ids[node_idx], log["time"])
             case msg if msg.startswith("Sent"):
                 register_sent_bytes(peer_ids[node_idx], log["size"], False)
-
+                
         elapsed_time = parser.isoparse(log["time"]) - genesis_time
-        # if elapsed_time >= next_snapshot:
         if take_snapshot:
-            if snapshot_counter % 25 == 0:
+            if (snapshot_counter % 25 == 0):
                 save_snapshot(data_dir, elapsed_time)
-
             snapshot_counter += 1
             take_snapshot = False
+        elif (elapsed_time >= next_snapshot):
+            save_snapshot(data_dir, elapsed_time)
             next_snapshot += snapshot_duration
+        
 
     end_time = datetime.fromisoformat(logs[-1]["time"])
-    # save_snapshot(data_dir, end_time - genesis_time)
+    save_snapshot(data_dir, end_time - genesis_time)
 
     return data_dir
 
@@ -217,15 +218,17 @@ def plot_total_network_traffic(plots_dir: str, json_data: list[tuple[int, dict]]
         
 
     plt.xlabel("Time (minutes)")
-    plt.ylabel("Traffic (MB)")
-    plt.title("Cumulative network traffic")
+    plt.ylabel("Traffic multiple")
+    plt.title("Multiple of Optimal Network Traffic")
 
-    conv_factor = 1_000_000
+    # conv_factor = 1_000_000
 
-    plt.plot(x, [e["payload"] // conv_factor for e in y], label="payload")
-    plt.plot(x, [e["control"] // conv_factor for e in y], label="control")
-    plt.plot(x, [e["optimal"] // conv_factor for e in y], label="payload_optimal")
-    plt.legend()
+    # plt.plot(x, [e["payload"] // conv_factor for e in y], label="payload")
+    # plt.plot(x, [e["control"] // conv_factor for e in y], label="control")
+    # plt.plot(x, [e["optimal"] // conv_factor for e in y], label="payload_optimal")
+    # plt.legend()
+    
+    plt.plot(x, [e["payload"] / (e["optimal"] or 1) for e in y])
 
     plt.savefig(os.path.join(plots_dir, "network_traffic.png"))
     plt.clf()
