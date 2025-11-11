@@ -22,15 +22,13 @@ def main():
         help="If set, will generate files but not run Shadow",
         default=False,
     )
-    parser.add_argument("--node_count", type=int, required=True)
-    parser.add_argument("--disable_gossip", type=bool, required=False)
+    parser.add_argument("--node-count", type=int, required=True)
     parser.add_argument("--seed", type=int, required=False, default=1)
-    parser.add_argument(
-        "--scenario", type=str, required=False, default="subnet-blob-msg"
-    )
-    parser.add_argument("--composition", type=str,
-                        required=False, default="all-go")
-    parser.add_argument("--output_dir", type=str, required=False)
+    parser.add_argument("--network", type=str, required=False, choices=["uniform", "binary", "random", "real"])
+    parser.add_argument("--scenario", type=str, required=True, choices=["random", "line-feed-in", "two-cliques", "all-to-all"])
+    parser.add_argument("--protocol", type=str, required=True, choices=["gossipsub", "dog"])
+    parser.add_argument("--parallelism", type=int, required=False, default=24)
+    parser.add_argument("--output-dir", type=str, required=False)
     args = parser.parse_args()
 
     if args.output_dir is None:
@@ -44,13 +42,12 @@ def main():
         import datetime
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        args.output_dir = f"{args.scenario}-{args.node_count}-{args.composition}-{args.seed}-{timestamp}-{git_describe}.data"
+        args.output_dir = f"{args.protocol}-{args.node_count}-{args.network}-{args.scenario}---{args.seed}-{timestamp}-{git_describe}.data"
 
     random.seed(args.seed)
 
-    binaries = experiment.composition(args.composition)
-    experiment_params = experiment.scenario(
-        args.scenario, args.node_count, args.disable_gossip)
+    binaries = experiment.composition(args.protocol)
+    experiment_params = experiment.scenario(args.protocol, args.scenario, args.node_count)
 
     with open(params_file_name, "w") as f:
         d = asdict(experiment_params)
@@ -69,6 +66,7 @@ def main():
 
     # Generate the network graph and the Shadow config for the binaries
     generate_graph(
+        args.network,
         binary_paths,
         "graph.gml",
         "shadow.yaml",
@@ -81,7 +79,7 @@ def main():
     subprocess.run(["make", "binaries"])
 
     subprocess.run(
-        ["shadow", "--parallelism", "24", "--progress", "true", "-d", args.output_dir, "shadow.yaml"],
+        ["shadow", "--parallelism", f"{args.parallelism}", "--progress", "true", "-d", args.output_dir, "shadow.yaml"],
     )
 
     # Move files to output_dir

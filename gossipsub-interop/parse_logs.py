@@ -121,10 +121,11 @@ def register_sent_bytes(node_id: str, num_bytes: int, is_payload: bool) -> None:
 def register_message_send(message_id: int, node_id: str, timestamp: datetime) -> None:
     if message_id not in msg_send_times:
         msg_send_times[message_id] = timestamp
-    # register_message_delivery(message_id, node_id, timestamp)
+    register_message_delivery(message_id, node_id, timestamp)
 
 def register_message_delivery(message_id: int, node_id: str, timestamp: datetime) -> None:
-    msg_delivery_times[message_id][node_id] = timestamp
+    if (node_id not in msg_delivery_times[message_id]):
+        msg_delivery_times[message_id][node_id] = timestamp
 
 def process_logs(test_dir: str, logs: list[dict]) -> str:
     snapshot_duration = timedelta(minutes=5)
@@ -156,12 +157,10 @@ def process_logs(test_dir: str, logs: list[dict]) -> str:
                 add_connection(log.get("topic", "default"), peer_ids[node_idx], log["from"])
                 take_snapshot = True
             case "Added Peer":
-                add_connection(log.get("topic", "default"), peer_ids[node_idx], log["id"])
-                # register_sent_bytes(peer_ids[node_idx], log["size"], False)
+                add_connection("default", peer_ids[node_idx], log["id"])
                 take_snapshot = True
             case "Removed Peer":
-                remove_connection(log.get("topic", "default"), peer_ids[node_idx], log["id"])
-                # register_sent_bytes(peer_ids[node_idx], log["size"], False)
+                remove_connection("default", peer_ids[node_idx], log["id"])
                 take_snapshot = True
             case "Sent Prune":
                 remove_connection(log.get("topic", "default"), peer_ids[node_idx], log["to"])
@@ -175,8 +174,6 @@ def process_logs(test_dir: str, logs: list[dict]) -> str:
             # case "Publish":
             #    register_message_send(log["id"], peer_ids[node_idx], log["time"])
             #    register_sent_bytes(peer_ids[node_idx], log["size"], True)
-            #case "Deliver":
-            #    register_message_delivery(log["id"], peer_ids[node_idx], log["time"])
             case "Sent Message":
                 register_message_send(log["id"], peer_ids[node_idx], log["time"])
                 register_sent_bytes(peer_ids[node_idx], log["size"], True)
@@ -196,8 +193,8 @@ def process_logs(test_dir: str, logs: list[dict]) -> str:
             next_snapshot += snapshot_duration
         
 
-    end_time = datetime.fromisoformat(logs[-1]["time"])
-    save_snapshot(data_dir, end_time - genesis_time)
+    # end_time = datetime.fromisoformat(logs[-1]["time"])
+    # save_snapshot(data_dir, end_time - genesis_time)
 
     return data_dir
 
@@ -206,16 +203,15 @@ def plot_total_network_traffic(plots_dir: str, json_data: list[tuple[int, dict]]
     x = [0]
     y = [{"optimal": 0, "payload": 0, "control": 0}]
 
+    num_nodes = len(json_data[-1][1]["bytes_payload"].keys())
+
     for total_minutes, data in json_data:
-        num_nodes = len(data["bytes_payload"].keys())
         x.append(total_minutes)
-        y.append( {
-            "optimal": num_nodes * total_minutes * 5 * 1024,
+        y.append({
+            "optimal": (num_nodes - 1) * total_minutes * 5 * 1024,
             "payload": sum(data["bytes_payload"].values()),
             "control": sum(data["bytes_control"].values()),
         })
-        y[-1]["payload"] = y[-1]["payload"] // 3
-        
 
     plt.xlabel("Time (minutes)")
     plt.ylabel("Traffic multiple")
@@ -228,7 +224,20 @@ def plot_total_network_traffic(plots_dir: str, json_data: list[tuple[int, dict]]
     # plt.plot(x, [e["optimal"] // conv_factor for e in y], label="payload_optimal")
     # plt.legend()
     
-    plt.plot(x, [e["payload"] / (e["optimal"] or 1) for e in y])
+    x_new = []
+    y_new = []
+    
+    for i in range(1, len(y)):
+        delta_payload = y[i]["payload"] - y[i-1]["payload"]
+        delta_optimal = y[i]["optimal"] - y[i-1]["optimal"]
+        
+        if (delta_optimal > 0) and (delta_payload > 0):
+            x_new.append(x[i])
+            y_new.append(delta_payload / delta_optimal)
+            
+    
+    # plt.ylim(bottom=1)
+    plt.plot(x_new, y_new)
 
     plt.savefig(os.path.join(plots_dir, "network_traffic.png"))
     plt.clf()
@@ -275,7 +284,7 @@ def plot_message_delivery_times(plots_dir: str, json_data: list[tuple[int, dict]
         send_ts = parser.isoparse(msg_send_data[str(msg_id)])
         delivery_times = [parser.isoparse(ts) for ts in msg_delivery_data[str(msg_id)].values()]
         delivery_times.sort()
-        delivery_latencies = [ts - send_ts for ts in delivery_times]
+        delivery_latencies = [ts - send_ts for ts in delivery_times[1:]]        
         y.append([t.total_seconds() * conv_factor for t in delivery_latencies])
         plt.scatter(i + np.random.normal(scale=0.1, size=len(y[-1])), y[-1], s=3)
 
@@ -311,44 +320,8 @@ def generate_plots(test_dir: str, data_dir: str) -> str:
     return plots_dir
 
 
-def plot_initial_connections(test_dir: str) -> None:
-    # plot connect instructions
-    graph = pydot.Dot(graph_type="digraph")
-
-    with open(os.path.join(test_dir, "params.json"), 'r') as f:
-        script = json.load(f)["script"]
-
-    # node_ids = set()
-
-    for instruction in script:
-        if instruction["type"] == "ifNodeIDEquals":
-            from_id = int(instruction["nodeID"])
-
-            # if from_id not in node_ids:
-            #    node_ids.add(from_id)
-            #    node = pydot.Node(from_id, label=str(from_id))
-            #    graph.add_node(node)
-
-            sub_instruction = instruction["instruction"]
-            if sub_instruction["type"] == "connect":
-                for to_id in sub_instruction["connectTo"]:
-                    # if to_id not in node_ids:
-                    #    node_ids.add(to_id)
-                    #    node = pydot.Node(to_id, label=str(to_id))
-                    #    graph.add_node(node)
-
-                    edge = pydot.Edge(from_id, to_id)
-                    graph.add_edge(edge)
-
-    with open(os.path.join(test_dir, "instructions.dot"), 'w') as f:
-        f.write(graph.to_string())
-
-
-
 def main():
     test_dir = sys.argv[1]
-
-    plot_initial_connections(test_dir)
 
     print("Parsing log files...")
     logs = parse_log_files(test_dir)
@@ -356,7 +329,7 @@ def main():
     print("Processing logs...")
     data_dir = process_logs(test_dir, logs)
 
-    # data_dir = os.path.join(test_dir, "data")
+    data_dir = os.path.join(test_dir, "data")
     print("Generating graphs...")
     generate_plots(test_dir, data_dir)
 

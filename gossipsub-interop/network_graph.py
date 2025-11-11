@@ -43,7 +43,6 @@ south_america = Location("south_america", 36)
 
 supernode = NodeType("supernode", 1024, 1024, 20)
 fullnode = NodeType("fullnode", 50, 50, 80)
-node_types = [fullnode]  # [supernode, fullnode]
 
 locations = [
     australia,
@@ -125,14 +124,29 @@ edges = [
 
 
 def generate_graph(
+    network_type: str,
     binary_paths: List[str],
     graph_file_name: str,
     shadow_yaml_file_name: str,
     params_file_location: str,
 ):
+    match network_type:
+        case "uniform":
+            node_types = [supernode]
+            for edge in edges:
+                edge.latency = 100  # override latency
+        case "binary":
+            node_types = [supernode, fullnode]
+        case "random":
+            raise NotImplementedError("random network not implemented yet")
+        case "real":
+            node_types = [supernode, fullnode]
+        case _:
+            raise ValueError(f"Unknown network type: {network_type}")
+    
     ids = {}
     for node_type in node_types:
-        for location in locations:
+        for location in locations:            
             name = f"{location.name}-{node_type.name}"
             ids[name] = len(ids)
             G.add_node(
@@ -144,7 +158,6 @@ def generate_graph(
     for t1 in node_types:
         for t2 in node_types:
             for edge in edges:
-                edge.latency = 100
                 G.add_edge(
                     f"{edge.src.name}-{t1.name}",
                     f"{edge.dst.name}-{t2.name}",

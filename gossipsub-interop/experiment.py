@@ -1,9 +1,10 @@
-import math
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import timedelta
 import random
 from typing import List, Dict, Set
+
+import networkx as nx
 
 from script_instruction import GossipSubParams, ScriptInstruction, NodeID
 import script_instruction
@@ -20,7 +21,7 @@ class ExperimentParams:
     script: List[ScriptInstruction] = field(default_factory=list)
 
 
-def spread_heartbeat_delay(node_count: int, template_gs_params: GossipSubParams) -> List[ScriptInstruction]:
+def spread_heartbeat_delay(node_count: int, template_gs_params: GossipSubParams) -> list[ScriptInstruction]:
     instructions = []
     initial_delay = timedelta(seconds=0.1)
     for i in range(node_count):
@@ -38,143 +39,127 @@ def spread_heartbeat_delay(node_count: int, template_gs_params: GossipSubParams)
     return instructions
 
 
-def scenario(scenario_name: str, node_count: int, disable_gossip: bool) -> ExperimentParams:
+def scenario(protocol: str, scenario_name: str, node_count: int) -> ExperimentParams:
     instructions: List[ScriptInstruction] = []
+    
+    num_messages = 1200
+    message_size = 1024
+    topics = ["topic-a"]
+    
+    match protocol:
+        case "gossipsub":
+            gs_params = GossipSubParams()
+            instructions.extend(spread_heartbeat_delay(node_count, gs_params))
+        case _:
+            pass
+    
+    def subscribe_to_topics() -> list[ScriptInstruction]:
+        if protocol == "gossipsub":
+            return [script_instruction.SubscribeToTopic(topicID=topic) for topic in topics]
+        return []
+    
     match scenario_name:
-        case "subnet-blob-msg":
-            gs_params = GossipSubParams()
-            if disable_gossip:
-                gs_params.Dlazy = 0
-                gs_params.GossipFactor = 0
-            instructions.extend(spread_heartbeat_delay(
-                node_count, gs_params))
-
-            topic = "a-subnet"
-            blob_count = 48
-            # According to data gathered by lighthouse, a column takes around
-            # 5ms.
-            instructions.append(
-                script_instruction.SetTopicValidationDelay(
-                    topicID=topic, delaySeconds=0.005)
-            )
-            number_of_conns_per_node = 20
-            if number_of_conns_per_node >= node_count:
-                number_of_conns_per_node = node_count - 1
-            instructions.extend(
-                random_network_mesh(node_count, number_of_conns_per_node)
-            )
-            message_size = 2 * 1024 * blob_count
-            num_messages = 16
-            instructions.append(
-                script_instruction.SubscribeToTopic(topicID=topic))
-            instructions.extend(
-                random_publish_every_12s(
-                    node_count, num_messages, message_size, [topic])
-            )
-        case "simple-fanout":
-            gs_params = GossipSubParams()
-            if disable_gossip:
-                gs_params.Dlazy = 0
-                gs_params.GossipFactor = 0
-            instructions.extend(spread_heartbeat_delay(
-                node_count, gs_params))
-            topic_a = "topic-a"
-            topic_b = "topic-b"
-            number_of_conns_per_node = 20
-            if number_of_conns_per_node >= node_count:
-                number_of_conns_per_node = node_count - 1
-            instructions.extend(
-                random_network_mesh(node_count, number_of_conns_per_node)
-            )
-
-            # Half nodes will subscribe to topic-a, the other half subscribe to
-            # topic-b
-            for i in range(node_count):
-                if i % 2 == 0:
-                    instructions.append(
-                        script_instruction.IfNodeIDEquals(
-                            nodeID=i,
-                            instruction=script_instruction.SubscribeToTopic(topicID=topic_a)),
-                    )
-                else:
-                    instructions.append(
-                        script_instruction.IfNodeIDEquals(
-                            nodeID=i,
-                            instruction=script_instruction.SubscribeToTopic(topicID=topic_b)),
-                    )
-
-            num_messages = 16
-            message_size = 1024
-
-            # Every 12s a random node will publish to a random topic
-            instructions.extend(
-                random_publish_every_12s(
-                    node_count, num_messages, message_size, [topic_a, topic_b]))
-
-        case "longevity":
-            gs_params = GossipSubParams()
-
-            if disable_gossip:
-                gs_params.Dlazy = 0
-                gs_params.GossipFactor = 0
-            #instructions.extend(spread_heartbeat_delay(node_count, gs_params))
-
-            number_of_conns_per_node = 20
-            if number_of_conns_per_node >= node_count:
-                number_of_conns_per_node = node_count - 1
-            instructions.extend(
-                random_network_mesh(node_count, number_of_conns_per_node)
-                # line_mesh(node_count)
-                # isolated_cluster_mesh(node_count, number_of_conns_per_node, int(math.sqrt(node_count)))
-                # cluster_bridge_mesh(node_count, number_of_conns_per_node, int(math.sqrt(node_count)))
-                # star_mesh(node_count, number_of_conns_per_node)
-            )
-
-            topic = "topic-a"
-
-            #instructions.append(
-            #    script_instruction.SubscribeToTopic(topicID=topic))
-            
+        case "random":
+            number_of_conns_per_node = min(20, node_count - 1)
+            instructions.extend(random_network_mesh(node_count, number_of_conns_per_node))
+            instructions.extend(subscribe_to_topics())
             instructions.extend(random_publish_every_12s(
                 node_count=node_count,
-                num_messages=100,
-                message_size=1024,
-                topic_strs=[topic]
+                num_messages=num_messages,
+                message_size=message_size,
+                topic_strs=topics
             ))
-            
-            """
+        case "line-feed-in":
+            instructions.extend(line_mesh(node_count))
+            instructions.extend(subscribe_to_topics())
             instructions.extend(
                 random_publish_every_12s(
                     node_count=node_count,
-                    num_messages=5,
-                    message_size=1024,
-                    topic_strs=[topic]
+                    num_messages=round(num_messages * 0.2),
+                    message_size=message_size,
+                    topic_strs=topics
                 )
             )
             instructions.extend(random_network_mesh(node_count, node_count // 2))
             instructions.extend(
                 random_publish_every_12s(
                     node_count=node_count,
-                    num_messages=95,
-                    message_size=1024,
-                    topic_strs=[topic]
+                    num_messages=round(num_messages * 0.8),
+                    message_size=message_size,
+                    topic_strs=topics
                 )
             )
-            """
+        case "two-cliques":
+            degree = min(node_count // 20, 20)
+            z = [degree for _ in range(node_count)]
+            G = nx.expected_degree_graph(z)
 
+            # clique A
+            for i in range(node_count // 2):
+                for j in range(node_count // 2):
+                    if i != j:
+                        G.add_edge(i, j)
+
+            # clique B
+            for i in range(node_count // 2, node_count):
+                for j in range(node_count // 2, node_count):
+                    if i != j:
+                        G.add_edge(i, j)
+
+            for node_id, nbrdict in G.adjacency():
+                neighbors = list(nbrdict.keys())
+                random.shuffle(neighbors)
+                instructions.append(
+                    script_instruction.IfNodeIDEquals(
+                        nodeID=node_id,
+                        instruction=script_instruction.Connect(
+                            connectTo=neighbors,
+                        ),
+                    )
+                )
+
+            instructions.extend(subscribe_to_topics())
+            instructions.extend(random_publish_every_12s(
+                node_count=node_count,
+                num_messages=num_messages,
+                message_size=message_size,
+                topic_strs=topics
+            ))
+        case "all-to-all":
+            number_of_conns_per_node = min(20, node_count - 1)
+            
+            for node_id in range(node_count):
+                connections = list(range(node_id)) + list(range(node_id+1, node_count))
+                random.shuffle(connections)
+                instructions.append(
+                    script_instruction.IfNodeIDEquals(
+                        nodeID=node_id,
+                        instruction=script_instruction.Connect(
+                            connectTo=connections,
+                        ),
+                    )
+                )
+
+            instructions.extend(subscribe_to_topics())
+            instructions.extend(random_publish_every_12s(
+                node_count=node_count,
+                num_messages=num_messages,
+                message_size=message_size,
+                topic_strs=topics
+            ))
         case _:
             raise ValueError(f"Unknown scenario name: {scenario_name}")
 
     return ExperimentParams(script=instructions)
 
 
-def composition(preset_name: str) -> List[Binary]:
-    match preset_name:
+def composition(protocol: str) -> List[Binary]:
+    match protocol:
         case "gossipsub":
             return [Binary("go-libp2p/gossipsub-bin", percent_of_nodes=100)]
         case "dog":
             return [Binary("libp2p-dog/target/debug/experiment", percent_of_nodes=100)]
-    raise ValueError(f"Unknown preset name: {preset_name}")
+    raise ValueError(f"Unknown protocol name: {protocol}")
 
 
 def isolated_cluster_mesh(num_nodes: int, number_of_connections: int, num_clusters: int) -> List[ScriptInstruction]:
@@ -329,7 +314,7 @@ def all_publish_every_12s(
 
     message_id = 0
 
-    for i in range(num_messages):
+    for _ in range(num_messages):
         for topic_str in topic_strs:
             for node in range(node_count):
                 instructions.append(
