@@ -42,7 +42,7 @@ def main():
         import datetime
 
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-        args.output_dir = f"{args.protocol}-{args.node_count}-{args.network}-{args.scenario}---{args.seed}-{timestamp}-{git_describe}.data"
+        args.output_dir = f"{args.node_count}-{args.network}-{args.scenario}-{args.protocol}---{args.seed}-{timestamp}-{git_describe}.data"
 
     random.seed(args.seed)
 

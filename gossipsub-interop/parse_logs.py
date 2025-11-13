@@ -3,15 +3,15 @@ import os
 import sys
 import json
 import shutil
+import heapq
 from collections import defaultdict
-from operator import itemgetter
 from datetime import datetime, timedelta, timezone
+from typing import Iterable, Optional, Self
 
 import pydot
 import numpy as np
 import matplotlib.pyplot as plt
 
-from tqdm import tqdm
 from dateutil import parser
 
 
@@ -20,8 +20,8 @@ meshes: dict[str, dict[str, set[str]]] = {}
 bytes_sent_payload: dict[str, int] = {}
 bytes_sent_control: dict[str, int] = {}
 
-msg_send_times: dict[int, datetime] = {}
-msg_delivery_times: dict[int, dict[str, datetime]] = defaultdict(dict)
+msg_send_times: dict[int, str] = {}
+msg_delivery_times: dict[int, dict[str, str]] = defaultdict(dict)
 
 def add_connection(topic: str, from_id: str, to_id: str) -> None:
     if topic not in meshes:
@@ -49,31 +49,59 @@ def remove_node(node_id: str):
     for mesh in meshes.values():
         if node_id in mesh:
             mesh.pop(node_id)
-
-
-def parse_log_files(root_dir: str) -> list[dict]:
-    root_dir = os.path.join(root_dir, "hosts")
-
-    logs = []
-
-    for node_dir in tqdm(os.listdir(root_dir)):
-        node_idx = int(node_dir.removeprefix("node"))
+            
+class LogEntry:
+    def __init__(self, node_id: int, log: dict) -> None:
+        self.node = node_id
+        self.time = parser.isoparse(log["time"])
+        self.log = log
         
+    def get(self, arg, default=None) -> Optional[str | int]:
+        return self.log.get(arg, default)
+        
+    def __getitem__(self, arg) -> str | int:
+        return self.log[arg]
+    
+    def __lt__(self, other: Self) -> bool:
+        return self.time < other.time
+
+
+def parse_log_files(root_dir: str) -> Iterable[LogEntry]:
+    root_dir = os.path.join(root_dir, "hosts")
+    
+    def parse_single_file(_node_idx: int, _file_path: str) -> Iterable[LogEntry]:
+        with open(_file_path, 'r') as f:
+            for log_line in f:
+                yield LogEntry(_node_idx, json.loads(log_line))
+                
+        # yield LogEntry(_node_idx, {"msg": "Shutdown", "time": logs[-1]["time"]})
+        
+    heads = []            
+
+    for node_dir in os.listdir(root_dir):
+        node_idx = int(node_dir.removeprefix("node"))
+            
         for log_file in os.listdir(os.path.join(root_dir, node_dir)):
             if not log_file.endswith(".stdout"):
                 continue
+            
+            file_path = os.path.join(root_dir, node_dir, log_file)
+            iterator = parse_single_file(node_idx, file_path)
+            if head := next(iterator, None):
+                heads.append((head, iterator))
+                
+    heapq.heapify(heads)
 
-            with open(os.path.join(root_dir, node_dir, log_file), 'r') as f:
-                for log_line in f.readlines():
-                    log = {"node": node_idx} | json.loads(log_line)
-                    logs.append(log)
-
-            # logs.append({"node": node_idx, "msg": "Shutdown", "time": logs[-1]["time"]})
-
-    return logs
+    while heads:
+        head, iterator = heapq.heappop(heads)
+        yield head
+        if head := next(iterator, None):
+            heapq.heappush(heads, (head, iterator))
 
 
 def save_snapshot(graph_dir: str, elapsed_time: timedelta) -> None:
+    print(f"Taking snapshot @ {elapsed_time} ...")
+    
     for topic, mesh in meshes.items():
         graph = pydot.Dot(topic, graph_type="digraph")
 
@@ -95,7 +123,6 @@ def save_snapshot(graph_dir: str, elapsed_time: timedelta) -> None:
             f.write(graph.to_string())
 
         file_path = os.path.join(topic_dir, f"{elapsed_time}.png")
-        print(f"Writing {file_path} ...")
 
         degrees = [len(to_ids) for to_ids in mesh.values()]
         counts, bins = np.histogram(degrees)
@@ -118,21 +145,19 @@ def register_sent_bytes(node_id: str, num_bytes: int, is_payload: bool) -> None:
     bytes_sent = bytes_sent_payload if is_payload else bytes_sent_control
     bytes_sent[node_id] = bytes_sent.get(node_id, 0) + num_bytes
 
-def register_message_send(message_id: int, node_id: str, timestamp: datetime) -> None:
+def register_message_send(message_id: int, node_id: str, timestamp: str) -> None:
     if message_id not in msg_send_times:
         msg_send_times[message_id] = timestamp
     register_message_delivery(message_id, node_id, timestamp)
 
-def register_message_delivery(message_id: int, node_id: str, timestamp: datetime) -> None:
+def register_message_delivery(message_id: int, node_id: str, timestamp: str) -> None:
     if (node_id not in msg_delivery_times[message_id]):
         msg_delivery_times[message_id][node_id] = timestamp
 
-def process_logs(test_dir: str, logs: list[dict]) -> str:
+def process_logs(test_dir: str, logs: Iterable[LogEntry]) -> str:
     snapshot_duration = timedelta(minutes=5)
     genesis_time = datetime(2000, 1, 1, tzinfo=timezone.utc)
     next_snapshot = snapshot_duration
-
-    logs.sort(key=itemgetter("time"))
 
     data_dir = os.path.join(test_dir, "data")
     print(f"Creating {data_dir} ...")
@@ -144,7 +169,7 @@ def process_logs(test_dir: str, logs: list[dict]) -> str:
     snapshot_counter = 0
 
     for log in logs:
-        node_idx = log["node"]
+        node_idx = log.node
 
         match log["msg"]:
             case "PeerID":
@@ -182,7 +207,7 @@ def process_logs(test_dir: str, logs: list[dict]) -> str:
             case msg if msg.startswith("Sent"):
                 register_sent_bytes(peer_ids[node_idx], log["size"], False)
                 
-        elapsed_time = parser.isoparse(log["time"]) - genesis_time
+        elapsed_time = log.time - genesis_time
         if take_snapshot:
             if (snapshot_counter % 25 == 0):
                 save_snapshot(data_dir, elapsed_time)
@@ -329,9 +354,11 @@ def main():
     print("Processing logs...")
     data_dir = process_logs(test_dir, logs)
 
-    data_dir = os.path.join(test_dir, "data")
+    # data_dir = os.path.join(test_dir, "data")
     print("Generating graphs...")
     generate_plots(test_dir, data_dir)
+    
+    print("Done.")
 
         
 if __name__ == "__main__":
