@@ -82,9 +82,10 @@ class LogEntry:
         return self.time < other.time
 
 
-def save_snapshot(graph_dir: str, elapsed_time: timedelta) -> None:
+def save_snapshot(graph_dir: str, elapsed_time: Optional[timedelta], final: bool) -> None:
     print(f"Taking snapshot @ {elapsed_time} ...")
     
+    """
     for topic, mesh in meshes.items():
         graph = pydot.Dot(topic, graph_type="digraph")
 
@@ -113,15 +114,22 @@ def save_snapshot(graph_dir: str, elapsed_time: timedelta) -> None:
         plt.hist(bins[:-1], bins, weights=counts)
         plt.savefig(file_path)
         plt.clf()
+    """
 
-
-    with open(os.path.join(graph_dir, f"{elapsed_time}.json"), 'w') as f:
-        json.dump({
-            "bytes_payload": bytes_sent_payload,
-            "bytes_control": bytes_sent_control,
+    snapshot_data = {
+        "bytes_payload": bytes_sent_payload,
+        "bytes_control": bytes_sent_control,
+    }
+    
+    if final:
+        snapshot_data |= {
             "message_sends": msg_send_times,
             "message_deliveries": msg_delivery_times
-        }, f, indent=4)
+        }
+
+    with open(os.path.join(graph_dir, f"{elapsed_time}.json"), 'w') as f:
+        json.dump(snapshot_data, f, indent=4)
+        
         
 
 def parse_log_files(root_dir: str) -> Iterable[LogEntry]:
@@ -158,7 +166,7 @@ def parse_log_files(root_dir: str) -> Iterable[LogEntry]:
             
 
 def process_logs(test_dir: str, logs: Iterable[LogEntry], warmup_time: timedelta) -> str:
-    snapshot_duration = timedelta(seconds=60)
+    snapshot_duration = timedelta(seconds=5)
     genesis_time = datetime(2000, 1, 1, tzinfo=timezone.utc)
     next_snapshot = max(warmup_time, snapshot_duration)
 
@@ -167,6 +175,8 @@ def process_logs(test_dir: str, logs: Iterable[LogEntry], warmup_time: timedelta
     if os.path.exists(data_dir):
         shutil.rmtree(data_dir)
     os.makedirs(data_dir)
+    
+    elapsed_time = None
 
     for log in logs:
         node_idx = log.node
@@ -208,13 +218,15 @@ def process_logs(test_dir: str, logs: Iterable[LogEntry], warmup_time: timedelta
                     register_sent_bytes(peer_ids[node_idx], log["size"], False)
                 
         if (elapsed_time >= next_snapshot):
-            save_snapshot(data_dir, elapsed_time)
+            save_snapshot(data_dir, elapsed_time, final=False)
             next_snapshot += snapshot_duration
+            
+    save_snapshot(data_dir, elapsed_time, final=True)
 
     return data_dir
 
 
-def get_optimal_latencies(test_dir: str) -> dict[int, list[int]]:
+def get_message_source_locations(test_dir: str) -> dict[int, str]:
     graph_file_path = os.path.join(test_dir, "graph.gml")
     G = nx.read_gml(graph_file_path, label="id")
 
@@ -222,9 +234,7 @@ def get_optimal_latencies(test_dir: str) -> dict[int, list[int]]:
         data["latency"] = int(data["latency"].removesuffix(" ms"))
     
     node_to_network_node = {}
-    message_sources = {}    
-
-    G_full = nx.DiGraph()
+    source_locations = {}    
 
     with open(os.path.join(test_dir, "shadow.yaml"), "r") as file:
         shadow_config = yaml.safe_load(file)
@@ -233,7 +243,6 @@ def get_optimal_latencies(test_dir: str) -> dict[int, list[int]]:
         node_id = int(node_name.removeprefix("node"))
         network_node_id = node_config["network_node_id"]
         node_to_network_node[node_id] = network_node_id
-        G_full.add_node(node_id)
 
     with open(os.path.join(test_dir, "params.json"), "r") as file:
         instructions = json.load(file)
@@ -244,26 +253,12 @@ def get_optimal_latencies(test_dir: str) -> dict[int, list[int]]:
 
         node_id = instruction["nodeID"]
         sub_instruction = instruction["instruction"]
-
-        if sub_instruction["type"] == "connect":
-            for other_node_id in sub_instruction["connectTo"]:
-                nn_1, nn_2 = node_to_network_node[node_id], node_to_network_node[other_node_id]
-                latency = nx.shortest_path_length(G, weight="latency", source=nn_1, target=nn_2)
-                if latency == 0:
-                    # same network node, but there is still latency
-                    latency = G.edges[nn_1, nn_2]["latency"]
-                G_full.add_edge(node_id, other_node_id, latency=latency)
-                G_full.add_edge(other_node_id, node_id, latency=latency)
-        elif sub_instruction["type"] == "publish":
-            message_sources[sub_instruction["messageID"]] = node_id
+        if sub_instruction["type"] == "publish":
+            network_node_id = node_to_network_node[node_id]
+            node_location = G.nodes[network_node_id]["label"].split("-")[0]
+            source_locations[sub_instruction["messageID"]] = node_location
             
-    optimal_latencies_ms = {}
-    for message_id, source_node_id in message_sources.items():
-        shortest_paths = nx.shortest_path_length(G_full, weight="latency", source=source_node_id)
-        shortest_paths.sort()
-        optimal_latencies_ms[message_id] = shortest_paths
-        
-    return optimal_latencies_ms
+    return source_locations
 
 
 def plot_total_network_traffic(plots_dir: str, json_data: list[tuple[int, dict]]) -> None:
@@ -326,27 +321,35 @@ def plot_payload_traffic_by_node(plots_dir: str, json_data: list[tuple[int, dict
     plt.clf()
 
 
-def plot_message_delivery_times(plots_dir: str, json_data: list[tuple[int, dict]]) -> None:
+def plot_message_delivery_times(plots_dir: str, json_data: list[tuple[int, dict]], source_locations: dict[int, str]) -> None:
     msg_send_data = json_data[-1][1]["message_sends"]
     msg_delivery_data = json_data[-1][1]["message_deliveries"]
 
     plt.xlabel("Message ID")
     plt.ylabel("Time (milliseconds)")
-    plt.title("Message Delivery Latency")
-
-    x = sorted([int(msg_id) for msg_id in msg_delivery_data.keys() if (int(msg_id) % 50 == 0)])
-    y = []
-
-    for i, msg_id in enumerate(x):
+    plt.title("Message Latency by Source Location")
+    
+    x = sorted(source_locations.values())
+    y = [[] for _ in x]
+    
+    message_ids = sorted([int(msg_id) for msg_id in msg_delivery_data.keys()])    
+    for msg_id in message_ids:
         send_ts = parser.isoparse(msg_send_data[str(msg_id)])
         delivery_times = [parser.isoparse(ts) for ts in msg_delivery_data[str(msg_id)].values()]
         delivery_times.sort()
-        delivery_latencies = [ts - send_ts for ts in delivery_times[1:]]        
-        y.append([t.total_seconds() * 1000 for t in delivery_latencies])
-        plt.scatter(i + np.random.normal(scale=0.1, size=len(y[-1])), y[-1], s=3)
+        delivery_latencies = [ts - send_ts for ts in delivery_times[1:]]
+        x_index = x.index(source_locations[msg_id])
+        y[x_index].extend([t.total_seconds() * 1000 for t in delivery_latencies])
+        
+    x = [x[i] for i in range(len(x)) if len(y[i]) > 0]
+    y = [y[i] for i in range(len(y)) if len(y[i]) > 0]
+        
+    for i in range(len(y)):
+        plt.scatter(i + np.random.normal(scale=0.1, size=len(y[i])), y[i], s=3)
 
-    plt.boxplot(y)
-    plt.xticks(list(range(len(x))), list(map(str, x)))
+    # plt.boxplot(y)
+    plt.xticks(list(range(len(x))), x, rotation=20)
+    plt.xlim((-0.5, len(x) - 0.5))
 
     plt.savefig(os.path.join(plots_dir, "message_latency.png"))
     plt.clf()
@@ -417,16 +420,25 @@ def generate_plots(test_dir: str, data_dir: str) -> str:
 
         hours = int(file_name.split(":")[0])
         minutes = int(file_name.split(":")[1])
-        total_minutes = 60 * hours + minutes
+        seconds = int(file_name.split(":")[2].split(".")[0])
+        
+        try:
+            microseconds = int(file_name.split(":")[2].split(".")[1])
+        except ValueError:
+            microseconds = 0
+            
+        total_microseconds = 1_000_000 * (60 * (60 * hours + minutes) + seconds) + microseconds
 
         with open(json_path, "r") as f:
-            json_data[total_minutes] = json.load(f)
+            json_data[total_microseconds] = json.load(f)
 
-    json_data = sorted(json_data.items())    
+    json_data = sorted(json_data.items())   
+    
+    source_locations = get_message_source_locations(test_dir)
 
     plot_total_network_traffic(plots_dir, json_data)
     plot_payload_traffic_by_node(plots_dir, json_data)
-    plot_message_delivery_times(plots_dir, json_data)
+    plot_message_delivery_times(plots_dir, json_data, source_locations)
     plot_message_delivery_percentiles(plots_dir, json_data)
 
     return plots_dir
@@ -435,12 +447,14 @@ def generate_plots(test_dir: str, data_dir: str) -> str:
 def main():
     test_dir = sys.argv[1]
 
+    """
     print("Parsing log files...")
     logs = parse_log_files(test_dir)
 
     print("Processing logs...")
-    warmup_time = timedelta(minutes=150) # TODO: make configurable
+    warmup_time = timedelta(minutes=2) # TODO: make configurable
     data_dir = process_logs(test_dir, logs, warmup_time)
+    """
 
     data_dir = os.path.join(test_dir, "data")
     print("Generating graphs...")

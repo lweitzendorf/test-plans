@@ -25,7 +25,7 @@ def main():
     parser.add_argument("--node-count", type=int, required=True)
     parser.add_argument("--seed", type=int, required=False, default=1)
     parser.add_argument("--network", type=str, required=False, choices=["uniform", "binary", "random", "real"])
-    parser.add_argument("--scenario", type=str, required=True, choices=["random", "line-feed-in", "two-cliques", "all-to-all"])
+    parser.add_argument("--scenario", type=str, required=True, choices=["random", "line-feed-in", "two-cliques", "all-to-all", "faivre-30-tps"])
     parser.add_argument("--protocol", type=str, required=True, choices=["gossipsub", "dog"])
     parser.add_argument("--parallelism", type=int, required=False, default=24)
     parser.add_argument("--output-dir", type=str, required=False)

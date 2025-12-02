@@ -34,7 +34,7 @@ func (IfNodeIDEqualsInstruction) isInstruction() {}
 // WaitUntilInstruction represents a wait until instruction in the script
 type WaitUntilInstruction struct {
 	Type           string `json:"type"`
-	ElapsedSeconds int    `json:"elapsedSeconds"`
+	ElapsedMillis  int    `json:"elapsedMillis"`
 }
 
 // isInstruction implements the ScriptInstruction interface

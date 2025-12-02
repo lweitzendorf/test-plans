@@ -63,30 +63,33 @@ def scenario(protocol: str, scenario_name: str, node_count: int) -> ExperimentPa
             number_of_conns_per_node = min(20, node_count - 1)
             instructions.extend(random_network_mesh(node_count, number_of_conns_per_node))
             instructions.extend(subscribe_to_topics())
-            instructions.extend(random_publish_every_12s(
+            instructions.extend(random_publish(
                 node_count=node_count,
                 num_messages=num_messages,
                 message_size=message_size,
-                topic_strs=topics
+                topic_strs=topics,
+                interval_ms=12_000
             ))
         case "line-feed-in":
             instructions.extend(line_mesh(node_count))
             instructions.extend(subscribe_to_topics())
             instructions.extend(
-                random_publish_every_12s(
+                random_publish(
                     node_count=node_count,
                     num_messages=round(num_messages * 0.2),
                     message_size=message_size,
-                    topic_strs=topics
+                    topic_strs=topics,
+                    interval_ms=12_000
                 )
             )
             instructions.extend(random_network_mesh(node_count, node_count // 2))
             instructions.extend(
-                random_publish_every_12s(
+                random_publish(
                     node_count=node_count,
                     num_messages=round(num_messages * 0.8),
                     message_size=message_size,
-                    topic_strs=topics
+                    topic_strs=topics,
+                    interval_ms=12_000
                 )
             )
         case "two-cliques":
@@ -119,11 +122,12 @@ def scenario(protocol: str, scenario_name: str, node_count: int) -> ExperimentPa
                 )
 
             instructions.extend(subscribe_to_topics())
-            instructions.extend(random_publish_every_12s(
+            instructions.extend(random_publish(
                 node_count=node_count,
                 num_messages=num_messages,
                 message_size=message_size,
-                topic_strs=topics
+                topic_strs=topics,
+                interval_ms=12_000
             ))
         case "all-to-all":
             number_of_conns_per_node = min(20, node_count - 1)
@@ -141,12 +145,27 @@ def scenario(protocol: str, scenario_name: str, node_count: int) -> ExperimentPa
                 )
 
             instructions.extend(subscribe_to_topics())
-            instructions.extend(random_publish_every_12s(
+            instructions.extend(random_publish(
                 node_count=node_count,
                 num_messages=num_messages,
                 message_size=message_size,
-                topic_strs=topics
+                topic_strs=topics,
+                interval_ms=12_000
             ))
+        case "faivre-30-tps":
+            num_minutes = 20
+            num_messages = num_minutes * 60 * 30
+
+            number_of_conns_per_node = min(20, node_count // 4)
+            instructions.extend(random_network_mesh(node_count, number_of_conns_per_node))
+            instructions.extend(subscribe_to_topics())
+            instructions.extend(all_publish(
+                node_count=node_count,
+                num_messages=num_messages,
+                message_size=message_size,
+                topic_strs=topics,
+                interval_ms=33
+            ))        
         case _:
             raise ValueError(f"Unknown scenario name: {scenario_name}")
 
@@ -160,67 +179,6 @@ def composition(protocol: str) -> List[Binary]:
         case "dog":
             return [Binary("libp2p-dog/target/debug/experiment", percent_of_nodes=100)]
     raise ValueError(f"Unknown protocol name: {protocol}")
-
-
-def isolated_cluster_mesh(num_nodes: int, number_of_connections: int, num_clusters: int) -> List[ScriptInstruction]:
-    instructions = []
-
-    cluster_size = num_nodes // num_clusters
-    if number_of_connections >= cluster_size:
-        number_of_connections = cluster_size - 1
-
-    for cluster_idx in range(num_clusters):
-        idx_offset = cluster_idx * cluster_size
-        for instruction in random_network_mesh(cluster_size, number_of_connections):
-            instruction.nodeID += idx_offset
-            for i in range(len(instruction.instruction.connectTo)):
-                instruction.instruction.connectTo[i] += idx_offset
-            instructions.append(instruction)
-
-    return instructions
-
-
-def cluster_bridge_mesh(num_nodes: int, number_of_connections: int, num_clusters: int) -> List[ScriptInstruction]:
-    instructions = []
-
-    cluster_size = num_nodes // num_clusters
-    if number_of_connections >= cluster_size:
-        number_of_connections = cluster_size - 1
-
-    for cluster_idx in range(num_clusters):
-        idx_offset = cluster_idx * cluster_size
-        for instruction in random_network_mesh(cluster_size, number_of_connections - 1):
-            instruction.nodeID += idx_offset
-            for i in range(len(instruction.instruction.connectTo)):
-                instruction.instruction.connectTo[i] += idx_offset
-
-            connections = set(instruction.instruction.connectTo)
-            while len(connections) == len(instruction.instruction.connectTo):
-                new_node = random.randint(0, num_nodes - 1)
-                if new_node not in connections:
-                    instruction.instruction.connectTo.append(new_node)
-
-            instructions.append(instruction)
-
-    return instructions
-
-
-def star_mesh(num_nodes: int, number_of_connections: int) -> List[ScriptInstruction]:
-    num_stars = (num_nodes // number_of_connections) + 1
-
-    instructions = random_network_mesh(num_stars, min(num_stars - 1, number_of_connections // 2))
-    for periphery_id in range(num_stars, num_nodes):
-        star_id = periphery_id % num_stars
-        instructions.append(
-            script_instruction.IfNodeIDEquals(
-                nodeID=periphery_id,
-                instruction=script_instruction.Connect(
-                    connectTo=[star_id],
-                ),
-            )
-        )
-
-    return instructions
 
 
 def line_mesh(num_nodes: int) -> List[ScriptInstruction]:
@@ -268,15 +226,15 @@ def random_network_mesh(
     return instructions
 
 
-def random_publish_every_12s(
-    node_count: int, num_messages: int, message_size: int, topic_strs: List[str]
+def random_publish(
+    node_count: int, num_messages: int, message_size: int, topic_strs: List[str], interval_ms: int
 ) -> List[ScriptInstruction]:
     instructions = []
 
     # Start at 120 seconds (2 minutes) to allow for setup time
-    elapsed_seconds = 120
+    elapsed_ms = 120_000
     instructions.append(script_instruction.WaitUntil(
-        elapsedSeconds=elapsed_seconds))
+        elapsedMillis=elapsed_ms))
 
     for i in range(num_messages):
         random_node = random.randint(0, node_count - 1)
@@ -291,26 +249,26 @@ def random_publish_every_12s(
                 ),
             )
         )
-        elapsed_seconds += 12  # Add 12 seconds for each subsequent message
+        elapsed_ms += interval_ms
         instructions.append(
-            script_instruction.WaitUntil(elapsedSeconds=elapsed_seconds)
+            script_instruction.WaitUntil(elapsedMillis=elapsed_ms)
         )
 
-    elapsed_seconds += 30  # wait a bit more to allow all messages to flush
+    elapsed_ms += 30_000  # wait a bit more to allow all messages to flush
     instructions.append(script_instruction.WaitUntil(
-        elapsedSeconds=elapsed_seconds))
+        elapsedMillis=elapsed_ms))
 
     return instructions
 
 
-def all_publish_every_12s(
-        node_count: int, num_messages: int, message_size: int, topic_strs: List[str]
+def all_publish(
+        node_count: int, num_messages: int, message_size: int, topic_strs: List[str], interval_ms: int
 ) -> List[ScriptInstruction]:
     instructions = []
 
     # Start at 120 seconds (2 minutes) to allow for setup time
-    elapsed_seconds = 120
-    instructions.append(script_instruction.WaitUntil(elapsedSeconds=elapsed_seconds))
+    elapsed_ms = 120_000
+    instructions.append(script_instruction.WaitUntil(elapsedMillis=elapsed_ms))
 
     message_id = 0
 
@@ -328,13 +286,13 @@ def all_publish_every_12s(
                     ),
                 )
                 message_id += 1
-        elapsed_seconds += 12  # Add 12 second for each subsequent message
+        elapsed_ms += interval_ms  # Add 12 second for each subsequent message
         instructions.append(
-            script_instruction.WaitUntil(elapsedSeconds=elapsed_seconds)
+            script_instruction.WaitUntil(elapsedMillis=elapsed_ms)
         )
 
-    elapsed_seconds += 30  # wait a bit more to allow all messages to flush
+    elapsed_ms += 30_000  # wait a bit more to allow all messages to flush
     instructions.append(script_instruction.WaitUntil(
-        elapsedSeconds=elapsed_seconds))
+        elapsedMillis=elapsed_ms))
 
     return instructions

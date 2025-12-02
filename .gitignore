@@ -17,6 +17,7 @@ __pycache__/
 *.dll
 *.so
 *.dylib
+*.png
 
 # Test binary, built with `go test -c`
 *.test

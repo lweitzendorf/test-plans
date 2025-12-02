@@ -80,10 +80,10 @@ func (n *scriptedNode) runInstruction(ctx context.Context, instruction ScriptIns
 			n.runInstruction(ctx, a.Instruction)
 		}
 	case WaitUntilInstruction:
-		targetTime := n.startTime.Add(time.Duration(a.ElapsedSeconds) * time.Second)
+		targetTime := n.startTime.Add(time.Duration(a.ElapsedMillis) * time.Millisecond)
 		waitTime := time.Until(targetTime)
 		if waitTime > 0 {
-			n.logger.Printf("Waiting %s (until elapsed: %ds)\n", waitTime, a.ElapsedSeconds)
+			n.logger.Printf("Waiting %s (until elapsed: %dms)\n", waitTime, a.ElapsedMillis)
 			time.Sleep(waitTime)
 		}
 	case PublishInstruction:
